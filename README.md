@@ -1,1 +1,1 @@
-MeMail Prj
+Takes a photo and sends it to a remote server.

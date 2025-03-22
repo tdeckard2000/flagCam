@@ -1,51 +1,27 @@
 #define BOARD_ESP32CAM_AITHINKER
-
-/**
- * 2. Kconfig setup
- *
- * If you have a Kconfig file, copy the content from
- *  https://github.com/espressif/esp32-camera/blob/master/Kconfig into it.
- * In case you haven't, copy and paste this Kconfig file inside the src directory.
- * This Kconfig file has definitions that allows more control over the camera and
- * how it will be initialized.
- */
-
-/**
- * 3. Enable PSRAM on sdkconfig:
- *
- * CONFIG_ESP32_SPIRAM_SUPPORT=y
- *
- * More info on
- * https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/kconfig.html#config-esp32-spiram-support
- */
-
-// ================================ CODE ======================================
-
+#include "esp_http_client.h"
+#include "esp_task_wdt.h"
+#include "esp_wifi.h"
 #include <esp_log.h>
 #include <esp_system.h>
 #include <nvs_flash.h>
-#include <sys/param.h>
 #include <string.h>
-
+#include <sys/param.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
 #include "esp_camera.h"
 
-// support IDF 5.x
+//!important Enable PSRAM on sdkconfig
+
 #ifndef portTICK_RATE_MS
 #define portTICK_RATE_MS portTICK_PERIOD_MS
 #endif
 
-
-#ifdef BOARD_ESP32CAM_AITHINKER
-
 #define CAM_PIN_PWDN 32
-#define CAM_PIN_RESET -1 //software reset will be performed
+#define CAM_PIN_RESET -1 // software reset will be performed
 #define CAM_PIN_XCLK 0
 #define CAM_PIN_SIOD 26
 #define CAM_PIN_SIOC 27
-
 #define CAM_PIN_D7 35
 #define CAM_PIN_D6 34
 #define CAM_PIN_D5 39
@@ -58,9 +34,7 @@
 #define CAM_PIN_HREF 23
 #define CAM_PIN_PCLK 22
 
-#endif
-
-static const char *TAG = "example:take_picture";
+static const char *TAG = "main";
 
 #if ESP_CAMERA_SUPPORTED
 static camera_config_t camera_config = {
@@ -82,26 +56,23 @@ static camera_config_t camera_config = {
     .pin_href = CAM_PIN_HREF,
     .pin_pclk = CAM_PIN_PCLK,
 
-    //XCLK 20MHz or 10MHz for OV2640 double FPS (Experimental)
-    .xclk_freq_hz = 20000000,
+    // XCLK 20MHz or 10MHz for OV2640 double FPS (Experimental)
+    .xclk_freq_hz = 10000000,
     .ledc_timer = LEDC_TIMER_0,
     .ledc_channel = LEDC_CHANNEL_0,
 
-    .pixel_format = PIXFORMAT_RGB565, //YUV422,GRAYSCALE,RGB565,JPEG
-    .frame_size = FRAMESIZE_QVGA,    //QQVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
+    .pixel_format = PIXFORMAT_JPEG,
+    .frame_size = FRAMESIZE_VGA,
 
-    .jpeg_quality = 12, //0-63, for OV series camera sensors, lower number means higher quality
-    .fb_count = 1,       //When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
+    .jpeg_quality = 12, // 0-63, for OV series camera sensors, lower number means higher quality
+    .fb_count = 1,
     .fb_location = CAMERA_FB_IN_PSRAM,
     .grab_mode = CAMERA_GRAB_WHEN_EMPTY,
 };
 
-static esp_err_t init_camera(void)
-{
-    //initialize the camera
+static esp_err_t init_camera(void) {
     esp_err_t err = esp_camera_init(&camera_config);
-    if (err != ESP_OK)
-    {
+    if (err != ESP_OK) {
         ESP_LOGE(TAG, "Camera Init Failed");
         return err;
     }
@@ -110,26 +81,101 @@ static esp_err_t init_camera(void)
 }
 #endif
 
-void app_main(void)
-{
-#if ESP_CAMERA_SUPPORTED
-    if(ESP_OK != init_camera()) {
+static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
+    if (event_base == WIFI_EVENT) {
+        switch (event_id) {
+        case WIFI_EVENT_STA_START:
+            ESP_LOGI(TAG, "Wi-Fi started, trying to connect...");
+            esp_wifi_connect();
+            break;
+        case WIFI_EVENT_STA_CONNECTED:
+            ESP_LOGI(TAG, "Connected to Wi-Fi!");
+            break;
+        case WIFI_EVENT_STA_DISCONNECTED:
+            ESP_LOGI(TAG, "Disconnected from Wi-Fi, retrying...");
+            esp_wifi_connect();
+            break;
+        default:
+            ESP_LOGI(TAG, "Other Wi-Fi event: %" PRId32, event_id);
+            break;
+        }
+    } else if (event_base == IP_EVENT) {
+        switch (event_id) {
+        case IP_EVENT_STA_GOT_IP:
+            char ip_str[16];
+            ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+            ESP_LOGI(TAG, "Got IP: %s", esp_ip4addr_ntoa(&event->ip_info.ip, ip_str, sizeof(ip_str)));
+            break;
+        }
+    }
+}
+
+static esp_netif_t *init_wifi() {
+    esp_netif_init();
+    esp_netif_t *wifi_info = esp_netif_create_default_wifi_sta();
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    esp_wifi_init(&cfg);
+    esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL);
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = "E-306@The_falls_at_riverwoods",
+            .password = "PurPenguin306",
+        },
+    };
+    ESP_LOGI(TAG, "Will try connecting to %s", wifi_config.sta.ssid);
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+    esp_wifi_start();
+    esp_wifi_connect();
+    return wifi_info;
+}
+
+static esp_err_t init_4mb_ext() {
+    nvs_flash_init();
+    return ESP_OK;
+}
+
+static esp_http_client_config_t init_http_client() {
+    esp_http_client_config_t config = {
+        .url = "http://10.20.115.23:3000/pic",
+        .method = HTTP_METHOD_POST,
+    };
+    return config;
+}
+
+static esp_err_t post_photo(esp_http_client_config_t *config, camera_fb_t *pic){
+    esp_http_client_handle_t client = esp_http_client_init(config);
+    esp_http_client_set_post_field(client, (const char *)pic->buf, pic->len);
+    esp_http_client_set_header(client, "Content-Type", "image/jpeg");
+    esp_err_t err = esp_http_client_perform(client);
+    ESP_LOGI(TAG, "POST Status = %d", esp_http_client_get_status_code(client));
+    vTaskDelay(10000 / portTICK_RATE_MS);
+    esp_http_client_cleanup(client);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "POST failed: %s", esp_err_to_name(err));
+        return ESP_FAIL;
+    } else {
+        return ESP_OK;
+    }
+}
+
+void app_main(void) {
+    esp_event_loop_create_default();
+    if (ESP_OK != init_4mb_ext()) {
+        ESP_LOGI(TAG, "Failed to initialize external 4mb");
         return;
     }
-
-    while (1)
-    {
+    init_wifi();
+    if (ESP_OK != init_camera()) {
+        ESP_LOGI(TAG, "Failed to initialize camera");
+        return;
+    }
+    esp_http_client_config_t config = init_http_client();
+    while (1) {
         ESP_LOGI(TAG, "Taking picture...");
         camera_fb_t *pic = esp_camera_fb_get();
-
-        // use pic->buf to access the image
         ESP_LOGI(TAG, "Picture taken! Its size was: %zu bytes", pic->len);
+        post_photo(&config, pic);
         esp_camera_fb_return(pic);
-
-        vTaskDelay(5000 / portTICK_RATE_MS);
     }
-#else
-    ESP_LOGE(TAG, "Camera support is not available for this chip");
-    return;
-#endif
 }
