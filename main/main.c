@@ -1,17 +1,20 @@
 #define BOARD_ESP32CAM_AITHINKER
+#include "driver/gpio.h"
+#include "esp_camera.h"
 #include "esp_http_client.h"
+#include "esp_netif.h"
+#include "esp_sleep.h"
 #include "esp_task_wdt.h"
 #include "esp_wifi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <esp_log.h>
 #include <esp_system.h>
 #include <nvs_flash.h>
 #include <string.h>
 #include <sys/param.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_camera.h"
 
-//!important Enable PSRAM on sdkconfig
+//! important Enable PSRAM on sdkconfig
 
 #ifndef portTICK_RATE_MS
 #define portTICK_RATE_MS portTICK_PERIOD_MS
@@ -76,7 +79,6 @@ static esp_err_t init_camera(void) {
         ESP_LOGE(TAG, "Camera Init Failed");
         return err;
     }
-
     return ESP_OK;
 }
 #endif
@@ -139,17 +141,17 @@ static esp_http_client_config_t init_http_client() {
     esp_http_client_config_t config = {
         .url = "http://10.20.115.23:3000/pic",
         .method = HTTP_METHOD_POST,
+        .timeout_ms = 20000,
     };
     return config;
 }
 
-static esp_err_t post_photo(esp_http_client_config_t *config, camera_fb_t *pic){
+static esp_err_t post_photo(esp_http_client_config_t *config, camera_fb_t *pic) {
     esp_http_client_handle_t client = esp_http_client_init(config);
     esp_http_client_set_post_field(client, (const char *)pic->buf, pic->len);
     esp_http_client_set_header(client, "Content-Type", "image/jpeg");
     esp_err_t err = esp_http_client_perform(client);
     ESP_LOGI(TAG, "POST Status = %d", esp_http_client_get_status_code(client));
-    vTaskDelay(10000 / portTICK_RATE_MS);
     esp_http_client_cleanup(client);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "POST failed: %s", esp_err_to_name(err));
@@ -159,23 +161,69 @@ static esp_err_t post_photo(esp_http_client_config_t *config, camera_fb_t *pic){
     }
 }
 
+static void init_pins() {
+    gpio_config_t io_conf = {
+        .pin_bit_mask = 1ULL << GPIO_NUM_13,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+    };
+    gpio_config(&io_conf);
+    gpio_config_t io_conf_led = {
+        .pin_bit_mask = 1ULL << GPIO_NUM_4,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    };
+    gpio_config(&io_conf_led);
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_13, 0);
+}
+
+static void await_wifi_connected() {
+    esp_netif_ip_info_t ip;
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    while (1) {
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        if (esp_netif_get_ip_info(netif, &ip) == ESP_OK && ip.ip.addr != 0) {
+            vTaskDelay(500 / portTICK_RATE_MS);
+            break;
+        }
+    }
+}
+
 void app_main(void) {
+    init_pins();
+    gpio_set_level(GPIO_NUM_4, 1); // Flash on
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    gpio_set_level(GPIO_NUM_4, 0);
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
+        ESP_LOGI(TAG, "Waking From Deep Sleep");
+    } else {
+        ESP_LOGI(TAG, "Waking For Other Reason %d", esp_sleep_get_wakeup_cause());
+        esp_deep_sleep_start();
+    }
     esp_event_loop_create_default();
     if (ESP_OK != init_4mb_ext()) {
         ESP_LOGI(TAG, "Failed to initialize external 4mb");
         return;
     }
     init_wifi();
-    if (ESP_OK != init_camera()) {
-        ESP_LOGI(TAG, "Failed to initialize camera");
-        return;
-    }
+    init_camera();
+    await_wifi_connected();
     esp_http_client_config_t config = init_http_client();
-    while (1) {
-        ESP_LOGI(TAG, "Taking picture...");
-        camera_fb_t *pic = esp_camera_fb_get();
-        ESP_LOGI(TAG, "Picture taken! Its size was: %zu bytes", pic->len);
-        post_photo(&config, pic);
-        esp_camera_fb_return(pic);
-    }
+
+    ESP_LOGI(TAG, "Taking picture...");
+    camera_fb_t *pic = esp_camera_fb_get();
+    ESP_LOGI(TAG, "Picture taken! Its size was: %zu bytes", pic->len);
+    post_photo(&config, pic);
+    esp_camera_fb_return(pic);
+
+    ESP_LOGI(TAG, "G'Night");
+    gpio_set_level(GPIO_NUM_4, 1); // Flash on
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    gpio_set_level(GPIO_NUM_4, 0);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    gpio_set_level(GPIO_NUM_4, 1); // Flash on
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    gpio_set_level(GPIO_NUM_4, 0);
+    esp_deep_sleep_start();
 }
