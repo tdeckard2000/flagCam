@@ -79,6 +79,14 @@ static esp_err_t init_camera(void) {
         ESP_LOGE(TAG, "Camera Init Failed");
         return err;
     }
+    sensor_t *s = esp_camera_sensor_get();
+    s->set_whitebal(s, 1);
+    s->set_awb_gain(s, 1);
+    s->set_brightness(s, 2);    // Max brightness
+    s->set_saturation(s, -1);   // Slightly reduce saturation
+    s->set_gain_ctrl(s, 1);     // Enable auto gain
+    s->set_exposure_ctrl(s, 1); // Enable auto exposure
+    s->set_gainceiling(s, (gainceiling_t)6); // Higher gain for low light
     return ESP_OK;
 }
 #endif
@@ -190,6 +198,25 @@ static void await_wifi_connected() {
     }
 }
 
+static void deep_sleep() {
+    ESP_LOGI(TAG, "G'Night");
+    gpio_set_level(GPIO_NUM_4, 1); // Flash on
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    gpio_set_level(GPIO_NUM_4, 0);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    gpio_set_level(GPIO_NUM_4, 1); // Flash on
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    gpio_set_level(GPIO_NUM_4, 0);
+    esp_deep_sleep_start();
+}
+
+static camera_fb_t* take_photo() {
+    ESP_LOGI(TAG, "Taking picture...");
+    camera_fb_t *pic = esp_camera_fb_get();
+    ESP_LOGI(TAG, "Picture taken! Its size was: %zu bytes", pic->len);
+    return pic;
+}
+
 void app_main(void) {
     init_pins();
     gpio_set_level(GPIO_NUM_4, 1); // Flash on
@@ -211,19 +238,8 @@ void app_main(void) {
     await_wifi_connected();
     esp_http_client_config_t config = init_http_client();
 
-    ESP_LOGI(TAG, "Taking picture...");
-    camera_fb_t *pic = esp_camera_fb_get();
-    ESP_LOGI(TAG, "Picture taken! Its size was: %zu bytes", pic->len);
+    camera_fb_t *pic = take_photo();
     post_photo(&config, pic);
     esp_camera_fb_return(pic);
-
-    ESP_LOGI(TAG, "G'Night");
-    gpio_set_level(GPIO_NUM_4, 1); // Flash on
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-    gpio_set_level(GPIO_NUM_4, 0);
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-    gpio_set_level(GPIO_NUM_4, 1); // Flash on
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-    gpio_set_level(GPIO_NUM_4, 0);
-    esp_deep_sleep_start();
+    deep_sleep();
 }
