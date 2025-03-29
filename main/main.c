@@ -15,7 +15,6 @@
 #include <sys/param.h>
 
 //! important Enable PSRAM on sdkconfig
-
 #ifndef portTICK_RATE_MS
 #define portTICK_RATE_MS portTICK_PERIOD_MS
 #endif
@@ -39,14 +38,12 @@
 
 static const char *TAG = "main";
 
-#if ESP_CAMERA_SUPPORTED
 static camera_config_t camera_config = {
     .pin_pwdn = CAM_PIN_PWDN,
     .pin_reset = CAM_PIN_RESET,
     .pin_xclk = CAM_PIN_XCLK,
     .pin_sccb_sda = CAM_PIN_SIOD,
     .pin_sccb_scl = CAM_PIN_SIOC,
-
     .pin_d7 = CAM_PIN_D7,
     .pin_d6 = CAM_PIN_D6,
     .pin_d5 = CAM_PIN_D5,
@@ -58,15 +55,12 @@ static camera_config_t camera_config = {
     .pin_vsync = CAM_PIN_VSYNC,
     .pin_href = CAM_PIN_HREF,
     .pin_pclk = CAM_PIN_PCLK,
-
     // XCLK 20MHz or 10MHz for OV2640 double FPS (Experimental)
     .xclk_freq_hz = 10000000,
     .ledc_timer = LEDC_TIMER_0,
     .ledc_channel = LEDC_CHANNEL_0,
-
     .pixel_format = PIXFORMAT_JPEG,
     .frame_size = FRAMESIZE_VGA,
-
     .jpeg_quality = 12, // 0-63, for OV series camera sensors, lower number means higher quality
     .fb_count = 1,
     .fb_location = CAMERA_FB_IN_PSRAM,
@@ -88,7 +82,6 @@ static esp_err_t init_camera(void) {
     s->set_gainceiling(s, (gainceiling_t)6); // Higher gain for low light
     return ESP_OK;
 }
-#endif
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
     if (event_base == WIFI_EVENT) {
@@ -144,14 +137,14 @@ static esp_err_t init_4mb_ext() {
 
 static esp_http_client_config_t init_http_client() {
     esp_http_client_config_t config = {
-        .url = "http://10.20.115.23:3000/pic",
+        .url = "http://10.20.115.23:3000/data",
         .method = HTTP_METHOD_POST,
         .timeout_ms = 20000,
     };
     return config;
 }
 
-static const char *get_time() {
+static const char *get_date() {
     time_t now;
     struct tm timeinfo;
     time(&now);
@@ -164,7 +157,7 @@ static const char *get_time() {
 static char *create_data_string(camera_fb_t *pic, int *out_len) {
     char data[512];
     const char *id = "AA000123";
-    const char *date = get_time();
+    const char *date = get_date();
     const float temp = 40.5;
     const float volts = 3.3431;
     snprintf(
@@ -225,7 +218,7 @@ static void await_wifi_connected() {
     }
 }
 
-void flash_led(int duration) {
+static void flash_led(int duration) {
     gpio_set_level(GPIO_NUM_4, 1); // Flash on
     vTaskDelay(duration / portTICK_PERIOD_MS);
     gpio_set_level(GPIO_NUM_4, 0);
