@@ -76,16 +76,15 @@ static camera_config_t camera_config = {
 static esp_err_t init_camera(void) {
     esp_err_t err = esp_camera_init(&camera_config);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Camera Init Failed");
         return err;
     }
     sensor_t *s = esp_camera_sensor_get();
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
-    s->set_brightness(s, 2);    // Max brightness
-    s->set_saturation(s, -1);   // Slightly reduce saturation
-    s->set_gain_ctrl(s, 1);     // Enable auto gain
-    s->set_exposure_ctrl(s, 1); // Enable auto exposure
+    s->set_brightness(s, 2);                 // Max brightness
+    s->set_saturation(s, -1);                // Slightly reduce saturation
+    s->set_gain_ctrl(s, 1);                  // Enable auto gain
+    s->set_exposure_ctrl(s, 1);              // Enable auto exposure
     s->set_gainceiling(s, (gainceiling_t)6); // Higher gain for low light
     return ESP_OK;
 }
@@ -95,7 +94,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     if (event_base == WIFI_EVENT) {
         switch (event_id) {
         case WIFI_EVENT_STA_START:
-            ESP_LOGI(TAG, "Wi-Fi started, trying to connect...");
             esp_wifi_connect();
             break;
         case WIFI_EVENT_STA_CONNECTED:
@@ -106,7 +104,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
             esp_wifi_connect();
             break;
         default:
-            ESP_LOGI(TAG, "Other Wi-Fi event: %" PRId32, event_id);
             break;
         }
     } else if (event_base == IP_EVENT) {
@@ -132,7 +129,7 @@ static esp_netif_t *init_wifi() {
             .password = "PurPenguin306",
         },
     };
-    ESP_LOGI(TAG, "Will try connecting to %s", wifi_config.sta.ssid);
+    ESP_LOGI(TAG, "Connecting to %s", wifi_config.sta.ssid);
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
     esp_wifi_start();
@@ -154,10 +151,39 @@ static esp_http_client_config_t init_http_client() {
     return config;
 }
 
-static esp_err_t post_photo(esp_http_client_config_t *config, camera_fb_t *pic) {
+static const char *get_time() {
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    static char timestamp[64];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+    return timestamp;
+}
+
+static char *create_data_string(camera_fb_t *pic, int *out_len) {
+    char data[512];
+    const char *id = "AA000123";
+    const char *date = get_time();
+    const float temp = 40.5;
+    const float volts = 3.3431;
+    snprintf(
+        data,
+        sizeof(data),
+        "id:%s,date:%s,temp:%.1f,volts:%.4f,image:",
+        id, date, temp, volts);
+    int total_len = strlen(data) + pic->len;
+    char *body = malloc(total_len);
+    memcpy(body, data, strlen(data));
+    memcpy(body + strlen(data), pic->buf, pic->len);
+    *out_len = total_len;
+    return body;
+}
+
+static esp_err_t post_data(esp_http_client_config_t *config, char *data_string, int *data_length) {
     esp_http_client_handle_t client = esp_http_client_init(config);
-    esp_http_client_set_post_field(client, (const char *)pic->buf, pic->len);
-    esp_http_client_set_header(client, "Content-Type", "image/jpeg");
+    esp_http_client_set_post_field(client, data_string, *data_length);
+    esp_http_client_set_header(client, "Content-Type", "application/octet-stream");
     esp_err_t err = esp_http_client_perform(client);
     ESP_LOGI(TAG, "POST Status = %d", esp_http_client_get_status_code(client));
     esp_http_client_cleanup(client);
@@ -167,6 +193,7 @@ static esp_err_t post_photo(esp_http_client_config_t *config, camera_fb_t *pic) 
     } else {
         return ESP_OK;
     }
+    return ESP_OK;
 }
 
 static void init_pins() {
@@ -198,48 +225,43 @@ static void await_wifi_connected() {
     }
 }
 
+void flash_led(int duration) {
+    gpio_set_level(GPIO_NUM_4, 1); // Flash on
+    vTaskDelay(duration / portTICK_PERIOD_MS);
+    gpio_set_level(GPIO_NUM_4, 0);
+}
+
 static void deep_sleep() {
     ESP_LOGI(TAG, "G'Night");
-    gpio_set_level(GPIO_NUM_4, 1); // Flash on
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-    gpio_set_level(GPIO_NUM_4, 0);
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-    gpio_set_level(GPIO_NUM_4, 1); // Flash on
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-    gpio_set_level(GPIO_NUM_4, 0);
+    flash_led(100);
     esp_deep_sleep_start();
 }
 
-static camera_fb_t* take_photo() {
-    ESP_LOGI(TAG, "Taking picture...");
+static camera_fb_t *take_photo() {
     camera_fb_t *pic = esp_camera_fb_get();
-    ESP_LOGI(TAG, "Picture taken! Its size was: %zu bytes", pic->len);
     return pic;
 }
 
 void app_main(void) {
     init_pins();
-    gpio_set_level(GPIO_NUM_4, 1); // Flash on
-    vTaskDelay(100 / portTICK_PERIOD_MS);
-    gpio_set_level(GPIO_NUM_4, 0);
+    flash_led(50);
     if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
-        ESP_LOGI(TAG, "Waking From Deep Sleep");
     } else {
-        ESP_LOGI(TAG, "Waking For Other Reason %d", esp_sleep_get_wakeup_cause());
         esp_deep_sleep_start();
     }
     esp_event_loop_create_default();
     if (ESP_OK != init_4mb_ext()) {
-        ESP_LOGI(TAG, "Failed to initialize external 4mb");
+        ESP_LOGI(TAG, "Error 4mb");
         return;
     }
     init_wifi();
     init_camera();
     await_wifi_connected();
     esp_http_client_config_t config = init_http_client();
-
     camera_fb_t *pic = take_photo();
-    post_photo(&config, pic);
+    int data_length;
+    char *data_string = create_data_string(pic, &data_length);
+    post_data(&config, data_string, &data_length);
     esp_camera_fb_return(pic);
     deep_sleep();
 }
