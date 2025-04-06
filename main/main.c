@@ -135,7 +135,7 @@ static esp_err_t init_4mb_ext() {
     return ESP_OK;
 }
 
-static esp_http_client_config_t init_http_client() {
+static esp_http_client_config_t get_http_client_config() {
     esp_http_client_config_t config = {
         .url = "http://10.20.115.23:3000/data",
         .method = HTTP_METHOD_POST,
@@ -250,7 +250,7 @@ void app_main(void) {
     init_wifi();
     init_camera();
     await_wifi_connected();
-    esp_http_client_config_t config = init_http_client();
+    esp_http_client_config_t config = get_http_client_config();
     camera_fb_t *pic = take_photo();
     int data_length;
     char *data_string = create_data_string(pic, &data_length);
