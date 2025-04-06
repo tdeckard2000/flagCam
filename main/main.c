@@ -173,8 +173,13 @@ static char *create_data_string(camera_fb_t *pic, int *out_len) {
     return body;
 }
 
-static esp_err_t post_data(esp_http_client_config_t *config, char *data_string, int *data_length) {
-    esp_http_client_handle_t client = esp_http_client_init(config);
+static esp_err_t post_data(char *data_string, int *data_length) {
+    esp_http_client_config_t config = {
+        .url = "http://10.20.115.23:3000/data",
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = 20000,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
     esp_http_client_set_post_field(client, data_string, *data_length);
     esp_http_client_set_header(client, "Content-Type", "application/octet-stream");
     esp_err_t err = esp_http_client_perform(client);
@@ -250,11 +255,10 @@ void app_main(void) {
     init_wifi();
     init_camera();
     await_wifi_connected();
-    esp_http_client_config_t config = get_http_client_config();
     camera_fb_t *pic = take_photo();
     int data_length;
     char *data_string = create_data_string(pic, &data_length);
-    post_data(&config, data_string, &data_length);
+    post_data(data_string, &data_length);
     esp_camera_fb_return(pic);
     deep_sleep();
 }
