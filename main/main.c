@@ -37,6 +37,7 @@
 #define CAM_PIN_PCLK 22
 
 static const char *TAG = "main";
+static const char *HUB_Upload_Address = "http://192.168.4.1:8000/upload";
 
 static camera_config_t camera_config = {
     .pin_pwdn = CAM_PIN_PWDN,
@@ -118,8 +119,8 @@ static esp_netif_t *init_wifi() {
     esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL);
     wifi_config_t wifi_config = {
         .sta = {
-            .ssid = "E-306@The_falls_at_riverwoods",
-            .password = "PurPenguin306",
+            .ssid = "PiZeroAP",
+            .password = "8123605563",
         },
     };
     ESP_LOGI(TAG, "Connecting to %s", wifi_config.sta.ssid);
@@ -133,15 +134,6 @@ static esp_netif_t *init_wifi() {
 static esp_err_t init_4mb_ext() {
     nvs_flash_init();
     return ESP_OK;
-}
-
-static esp_http_client_config_t get_http_client_config() {
-    esp_http_client_config_t config = {
-        .url = "http://10.20.115.23:3000/data",
-        .method = HTTP_METHOD_POST,
-        .timeout_ms = 20000,
-    };
-    return config;
 }
 
 static const char *get_date() {
@@ -175,7 +167,7 @@ static char *create_data_string(camera_fb_t *pic, int *out_len) {
 
 static esp_err_t post_data(char *data_string, int *data_length) {
     esp_http_client_config_t config = {
-        .url = "http://10.20.115.23:3000/data",
+        .url = HUB_Upload_Address,
         .method = HTTP_METHOD_POST,
         .timeout_ms = 20000,
     };
@@ -231,7 +223,6 @@ static void flash_led(int duration) {
 
 static void deep_sleep() {
     ESP_LOGI(TAG, "G'Night");
-    flash_led(100);
     esp_deep_sleep_start();
 }
 
@@ -242,7 +233,7 @@ static camera_fb_t *take_photo() {
 
 void app_main(void) {
     init_pins();
-    flash_led(50);
+    flash_led(500);
     if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
     } else {
         esp_deep_sleep_start();
@@ -252,13 +243,19 @@ void app_main(void) {
         ESP_LOGI(TAG, "Error 4mb");
         return;
     }
-    init_wifi();
     init_camera();
-    await_wifi_connected();
-    camera_fb_t *pic = take_photo();
-    int data_length;
-    char *data_string = create_data_string(pic, &data_length);
-    post_data(data_string, &data_length);
-    esp_camera_fb_return(pic);
+    init_wifi();
+    for(int i = 0; i < 30; i++) {
+        await_wifi_connected();
+        camera_fb_t *pic = take_photo();
+        flash_led(100);
+        int data_length;
+        char *data_string = create_data_string(pic, &data_length);
+        post_data(data_string, &data_length);
+        esp_camera_fb_return(pic);
+        ESP_LOGI(TAG, "Wait 15 seconds");
+        vTaskDelay(15000 / portTICK_PERIOD_MS);
+    }
+    flash_led(500);
     deep_sleep();
 }
