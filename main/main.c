@@ -119,7 +119,7 @@ static esp_netif_t *init_wifi() {
     esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL);
     wifi_config_t wifi_config = {
         .sta = {
-            .ssid = "PiZeroAP",
+            .ssid = "FlagHub",
             .password = "8123605563",
         },
     };
@@ -233,7 +233,7 @@ static camera_fb_t *take_photo() {
 
 void app_main(void) {
     init_pins();
-    flash_led(500);
+    flash_led(1000);
     if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) {
     } else {
         esp_deep_sleep_start();
@@ -256,6 +256,6 @@ void app_main(void) {
         ESP_LOGI(TAG, "Wait 15 seconds");
         vTaskDelay(15000 / portTICK_PERIOD_MS);
     }
-    flash_led(500);
+    flash_led(100);
     deep_sleep();
 }
